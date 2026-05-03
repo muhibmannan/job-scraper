@@ -82,6 +82,30 @@ class Database:
         cursor = self.conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
+    
+    def stats(self) -> dict:
+        """Return aggregate stats: total count, breakdowns by source and company."""
+        total = self.count()
+
+        cursor = self.conn.execute(
+            "SELECT source, COUNT(*) as count FROM jobs GROUP BY source ORDER BY count DESC"
+        )
+        by_source = {row["source"]: row["count"] for row in cursor.fetchall()}
+
+        cursor = self.conn.execute(
+            "SELECT company, COUNT(*) as count FROM jobs "
+            "GROUP BY company ORDER BY count DESC LIMIT 10"
+        )
+        top_companies = [
+            {"company": row["company"], "count": row["count"]}
+            for row in cursor.fetchall()
+        ]
+
+        return {
+            "total": total,
+            "by_source": by_source,
+            "top_companies": top_companies,
+        }
 
     def count(self) -> int:
         cursor = self.conn.execute("SELECT COUNT(*) FROM jobs")
