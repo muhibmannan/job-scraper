@@ -50,6 +50,38 @@ class Database:
     def get_all_jobs(self) -> list[dict]:
         cursor = self.conn.execute("SELECT * FROM jobs ORDER BY scraped_at DESC")
         return [dict(row) for row in cursor.fetchall()]
+    
+    def search_jobs(
+        self,
+        category: str | None = None,
+        company: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Search jobs with optional filters. Returns most recently scraped first."""
+        clauses = []
+        params: list = []
+
+        if category is not None:
+            # source values look like 'gradconnection-graduate' or 'gradconnection-internship'
+            clauses.append("source LIKE ?")
+            params.append(f"%-{category}")
+
+        if company is not None:
+            clauses.append("LOWER(company) LIKE ?")
+            params.append(f"%{company.lower()}%")
+
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = f"SELECT * FROM jobs {where} ORDER BY scraped_at DESC LIMIT ?"
+        params.append(limit)
+
+        cursor = self.conn.execute(sql, params)
+        return [dict(row) for row in cursor.fetchall()]
+    
+    def get_job(self, job_id: int) -> dict | None:
+        """Fetch a single job by id. Returns None if not found."""
+        cursor = self.conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
 
     def count(self) -> int:
         cursor = self.conn.execute("SELECT COUNT(*) FROM jobs")

@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Annotated
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .database import Database
@@ -8,7 +9,7 @@ from .database import Database
 app = FastAPI(
     title="Job Scraper API",
     description="HTTP interface for the GradConnection job scraper.",
-    version="0.2.0",
+    version="0.3.0",
 )
 
 DB_PATH = "jobs.db"
@@ -48,11 +49,46 @@ def health() -> HealthResponse:
 
 
 @app.get("/jobs", response_model=list[JobResponse], tags=["jobs"])
-def list_jobs() -> list[JobResponse]:
-    """Return all jobs stored in the database."""
+def list_jobs(
+    category: Annotated[
+        str | None,
+        Query(
+            description="Filter by category: 'graduate' or 'internship'.",
+            examples=["graduate"],
+        ),
+    ] = None,
+    company: Annotated[
+        str | None,
+        Query(
+            description="Case-insensitive substring match on company name.",
+            examples=["tiktok"],
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=200,
+            description="Maximum number of jobs to return (1-200).",
+        ),
+    ] = 50,
+) -> list[JobResponse]:
+    """Return jobs from the database, optionally filtered by category or company."""
     db = Database(DB_PATH)
     try:
-        rows = db.get_all_jobs()
+        rows = db.search_jobs(category=category, company=company, limit=limit)
         return [JobResponse(**row) for row in rows]
+    finally:
+        db.close()
+
+@app.get("/jobs/{job_id}", response_model=JobResponse, tags=["jobs"])
+def get_job(job_id: int) -> JobResponse:
+    """Fetch a single job by its database id. Returns 404 if not found."""
+    db = Database(DB_PATH)
+    try:
+        row = db.get_job(job_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+        return JobResponse(**row)
     finally:
         db.close()
