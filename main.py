@@ -1,6 +1,10 @@
 import argparse
 import sys
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from src.job_scraper.database import Database
 from src.job_scraper.scraper import Scraper
 
@@ -8,7 +12,7 @@ from src.job_scraper.scraper import Scraper
 def cmd_scrape(args: argparse.Namespace) -> int:
     """Scrape jobs and save to the database."""
     scraper = Scraper(category=args.category)
-    db = Database(args.db)
+    db = Database()
 
     try:
         jobs = scraper.scrape()
@@ -31,7 +35,7 @@ def cmd_scrape(args: argparse.Namespace) -> int:
 
 def cmd_list(args: argparse.Namespace) -> int:
     """List all jobs in the database."""
-    db = Database(args.db)
+    db = Database()
     jobs = db.get_all_jobs()
 
     if not jobs:
@@ -55,7 +59,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 def cmd_count(args: argparse.Namespace) -> int:
     """Print the number of jobs in the database."""
-    db = Database(args.db)
+    db = Database()
     print(db.count())
     db.close()
     return 0
@@ -65,11 +69,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         prog="job-scraper",
         description="Scrape Australian graduate SWE jobs into a local SQLite DB.",
-    )
-    parser.add_argument(
-        "--db",
-        default="jobs.db",
-        help="path to SQLite database file (default: jobs.db)",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
