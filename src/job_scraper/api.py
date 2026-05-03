@@ -7,13 +7,56 @@ from pydantic import BaseModel, Field
 from .database import Database
 from .scraper import Scraper
 
+from contextlib import asynccontextmanager
+
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+
+DB_PATH = "jobs.db"
+SCRAPE_INTERVAL_MINUTES = 30
+
+def _scheduled_scrape() -> None:
+    """The function the scheduler calls. Same shape as _run_scrape but always 'both'."""
+    print("[scheduler] starting scrape...")
+    scraper = Scraper(category="both")
+    db = Database(DB_PATH)
+    try:
+        jobs = scraper.scrape()
+        inserted = sum(1 for job in jobs if db.save_job(job))
+        print(f"[scheduler] {inserted} new, {len(jobs) - inserted} duplicates")
+    except Exception as e:
+        print(f"[scheduler] failed: {e}")
+    finally:
+        db.close()
+
+
+scheduler = BackgroundScheduler()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    scheduler.add_job(
+        _scheduled_scrape,
+        trigger=IntervalTrigger(minutes=SCRAPE_INTERVAL_MINUTES),
+        id="periodic_scrape",
+        name="GradConnection periodic scrape",
+        replace_existing=True,
+    )
+    scheduler.start()
+    print(f"[scheduler] started, scraping every {SCRAPE_INTERVAL_MINUTES} minutes")
+    yield                              # ← THIS LINE IS MISSING
+    # Shutdown
+    scheduler.shutdown(wait=False)
+    print("[scheduler] stopped")
+
+
 app = FastAPI(
     title="Job Scraper API",
     description="HTTP interface for the GradConnection job scraper.",
-    version="0.5.0",
+    version="0.6.0",
+    lifespan=lifespan,
 )
-
-DB_PATH = "jobs.db"
 
 
 # ----- Pydantic models -----
