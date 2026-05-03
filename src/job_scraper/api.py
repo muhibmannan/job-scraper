@@ -13,7 +13,10 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 DB_PATH = "jobs.db"
-SCRAPE_INTERVAL_MINUTES = 30
+
+import os
+
+SCRAPE_INTERVAL_MINUTES = int(os.environ.get("SCRAPE_INTERVAL_MINUTES", "30"))
 
 def _scheduled_scrape() -> None:
     """The function the scheduler calls. Same shape as _run_scrape but always 'both'."""
@@ -28,6 +31,10 @@ def _scheduled_scrape() -> None:
         print(f"[scheduler] failed: {e}")
     finally:
         db.close()
+
+def _is_paused() -> bool:
+    """Return True if the scheduler is paused (not the same as 'not running')."""
+    return scheduler.state == 2  # APScheduler STATE_PAUSED constant
 
 
 scheduler = BackgroundScheduler()
@@ -54,7 +61,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Job Scraper API",
     description="HTTP interface for the GradConnection job scraper.",
-    version="0.6.0",
+    version="0.7.0",
     lifespan=lifespan,
 )
 
@@ -91,11 +98,22 @@ class ScrapeRequest(BaseModel):
         examples=["both"],
     )
 
-
 class ScrapeResponse(BaseModel):
     status: str = Field(..., examples=["queued"])
     category: str = Field(..., examples=["both"])
     message: str
+
+class SchedulerJobResponse(BaseModel):
+    id: str = Field(..., examples=["periodic_scrape"])
+    name: str = Field(..., examples=["GradConnection periodic scrape"])
+    trigger: str = Field(..., description="Human-readable trigger description", examples=["interval[0:30:00]"])
+    next_run_time: datetime | None = Field(None, description="When the job will next fire, or null if paused")
+
+
+class SchedulerStatusResponse(BaseModel):
+    running: bool
+    paused: bool
+    jobs: list[SchedulerJobResponse]
 
 
 # ----- Helpers -----
@@ -219,3 +237,45 @@ def get_stats() -> StatsResponse:
         return StatsResponse(**db.stats())
     finally:
         db.close()
+
+# ----- Routes: scheduler -----
+
+@app.get(
+    "/scheduler/jobs",
+    response_model=SchedulerStatusResponse,
+    tags=["scheduler"],
+)
+def scheduler_status() -> SchedulerStatusResponse:
+    """Inspect scheduled jobs: ids, triggers, and next fire times."""
+    jobs = [
+        SchedulerJobResponse(
+            id=job.id,
+            name=job.name,
+            trigger=str(job.trigger),
+            next_run_time=job.next_run_time,
+        )
+        for job in scheduler.get_jobs()
+    ]
+    return SchedulerStatusResponse(
+        running=scheduler.running,
+        paused=_is_paused(),
+        jobs=jobs,
+    )
+
+
+@app.post("/scheduler/pause", tags=["scheduler"], status_code=200)
+def scheduler_pause() -> dict[str, str]:
+    """Pause all scheduled jobs. Existing in-flight runs finish; no new ones fire."""
+    if _is_paused():
+        return {"status": "already_paused"}
+    scheduler.pause()
+    return {"status": "paused"}
+
+
+@app.post("/scheduler/resume", tags=["scheduler"], status_code=200)
+def scheduler_resume() -> dict[str, str]:
+    """Resume scheduled jobs."""
+    if not _is_paused():
+        return {"status": "already_running"}
+    scheduler.resume()
+    return {"status": "resumed"}
