@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .database import Database
@@ -54,7 +55,7 @@ async def lifespan(app: FastAPI):
     )
     scheduler.start()
     print(f"[scheduler] started, scraping every {SCRAPE_INTERVAL_MINUTES} minutes")
-    yield                              # ← THIS LINE IS MISSING
+    yield       
     # Shutdown
     scheduler.shutdown(wait=False)
     print("[scheduler] stopped")
@@ -63,8 +64,21 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Job Scraper API",
     description="HTTP interface for the GradConnection job scraper.",
-    version="0.7.0",
+    version="0.8.0",
     lifespan=lifespan,
+)
+
+ALLOWED_ORIGINS = [
+    "https://swe-job-tracker.vercel.app",  # production
+    "http://localhost:3000",                # local Next.js dev
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
 )
 
 
