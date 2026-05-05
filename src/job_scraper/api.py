@@ -16,8 +16,6 @@ from contextlib import asynccontextmanager
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-DB_PATH = "jobs.db"
-
 import os
 
 SCRAPE_INTERVAL_MINUTES = int(os.environ.get("SCRAPE_INTERVAL_MINUTES", "30"))
@@ -26,7 +24,7 @@ def _scheduled_scrape() -> None:
     """The function the scheduler calls. Same shape as _run_scrape but always 'both'."""
     print("[scheduler] starting scrape...")
     scraper = Scraper(category="both")
-    db = Database(DB_PATH)
+    db = Database()
     try:
         jobs = scraper.scrape()
         inserted = sum(1 for job in jobs if db.save_job(job))
@@ -125,7 +123,7 @@ class SchedulerStatusResponse(BaseModel):
 def _run_scrape(category: str) -> None:
     """Background task: run a scrape and save results."""
     scraper = Scraper(category=category)
-    db = Database(DB_PATH)
+    db = Database()
     try:
         jobs = scraper.scrape()
         inserted = sum(1 for job in jobs if db.save_job(job))
@@ -176,7 +174,7 @@ def list_jobs(
     ] = 50,
 ) -> list[JobResponse]:
     """Return jobs from the database, optionally filtered by category or company."""
-    db = Database(DB_PATH)
+    db = Database()
     try:
         rows = db.search_jobs(category=category, company=company, limit=limit)
         return [JobResponse(**row) for row in rows]
@@ -187,7 +185,7 @@ def list_jobs(
 @app.get("/jobs/{job_id}", response_model=JobResponse, tags=["jobs"])
 def get_job(job_id: int) -> JobResponse:
     """Fetch a single job by its database id. Returns 404 if not found."""
-    db = Database(DB_PATH)
+    db = Database()
     try:
         row = db.get_job(job_id)
         if row is None:
@@ -236,7 +234,7 @@ def trigger_scrape(
 @app.get("/stats", response_model=StatsResponse, tags=["meta"])
 def get_stats() -> StatsResponse:
     """Aggregate stats: total job count, breakdown by source, and top companies."""
-    db = Database(DB_PATH)
+    db = Database()
     try:
         return StatsResponse(**db.stats())
     finally:
