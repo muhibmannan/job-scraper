@@ -21,14 +21,14 @@ def cmd_scrape(args: argparse.Namespace) -> int:
         return 1
 
     inserted = 0
-    duplicates = 0
+    updated = 0
     for job in jobs:
         if db.save_job(job):
             inserted += 1
         else:
-            duplicates += 1
+            updated += 1
 
-    print(f"\nDone: {inserted} new, {duplicates} duplicates, {db.count()} total in DB")
+    print(f"\nDone: {inserted} new, {updated} updated, {db.count()} total in DB")
     db.close()
     return 0
 
@@ -68,7 +68,7 @@ def cmd_count(args: argparse.Namespace) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="job-scraper",
-        description="Scrape Australian graduate SWE jobs into a local SQLite DB.",
+        description="Scrape Australian graduate SWE jobs into Supabase Postgres.",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)

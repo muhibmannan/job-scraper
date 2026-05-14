@@ -1,8 +1,57 @@
+import re
 import time
+from datetime import datetime, timedelta, timezone
+
 import requests
 from bs4 import BeautifulSoup
 
 from .job import Job
+
+
+# Regex captures the number and unit from "Closing in N <unit>".
+# Handles "Closing in a day" / "Closing in an hour" by treating "a"/"an" as 1.
+_CLOSING_RE = re.compile(
+    r"closing in\s+(?P<num>\d+|a|an)\s+(?P<unit>hour|hours|day|days|week|weeks|month|months|year|years)",
+    re.IGNORECASE,
+)
+
+# How many days each unit represents.
+_UNIT_DAYS = {
+    "hour": 1 / 24,
+    "hours": 1 / 24,
+    "day": 1,
+    "days": 1,
+    "week": 7,
+    "weeks": 7,
+    "month": 30,
+    "months": 30,
+    "year": 365,
+    "years": 365,
+}
+
+
+def parse_closing_in(text: str, scraped_at: datetime) -> datetime | None:
+    """Convert GradConnection's 'Closing in N <unit>' text into an absolute
+    datetime relative to scrape time. Returns None if the text doesn't match
+    (e.g., 'New!' or empty).
+    """
+    if not text:
+        return None
+
+    match = _CLOSING_RE.search(text)
+    if not match:
+        return None
+
+    num_raw = match.group("num").lower()
+    unit = match.group("unit").lower()
+
+    if num_raw in ("a", "an"):
+        num = 1
+    else:
+        num = int(num_raw)
+
+    days = num * _UNIT_DAYS[unit]
+    return scraped_at + timedelta(days=days)
 
 
 class Scraper:
@@ -79,6 +128,10 @@ class Scraper:
         desc_el = card.select_one(".box-description-para")
         description = desc_el.get_text(strip=True) if desc_el else ""
 
+        # Compute absolute closing timestamp from the relative text.
+        scraped_at = datetime.now(timezone.utc)
+        closing_at = parse_closing_in(posted_date, scraped_at)
+
         return Job(
             title=title,
             company=company,
@@ -86,7 +139,9 @@ class Scraper:
             url=url,
             description=description,
             posted_date=posted_date,
+            closing_at=closing_at,
             source=f"gradconnection-{category}",
+            scraped_at=scraped_at,
         )
 
     def scrape(self) -> list[Job]:

@@ -31,29 +31,42 @@ class Database:
             cur.close()
 
     def save_job(self, job: Job) -> bool:
-        """Insert a job. Returns True if inserted, False if a row with this URL exists."""
-        try:
-            with self._cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO scraped_jobs
-                        (title, company, location, url, description, posted_date, source, scraped_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        job.title,
-                        job.company,
-                        job.location,
-                        job.url,
-                        job.description,
-                        job.posted_date,
-                        job.source,
-                        job.scraped_at,
-                    ),
-                )
-            return True
-        except psycopg.errors.UniqueViolation:
-            return False  # URL already exists
+        """Upsert a job by URL.
+
+        - On first scrape of a URL: inserts the new row, returns True.
+        - On re-scrape of an existing URL: updates the mutable fields
+          (description, posted_date, closing_at, scraped_at) so the
+          frontend reflects fresh closing-time data. Returns False to
+          indicate "already known", even though we did update.
+        """
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO scraped_jobs
+                    (title, company, location, url, description,
+                     posted_date, closing_at, source, scraped_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (url) DO UPDATE SET
+                    description = EXCLUDED.description,
+                    posted_date = EXCLUDED.posted_date,
+                    closing_at = EXCLUDED.closing_at,
+                    scraped_at = EXCLUDED.scraped_at
+                RETURNING (xmax = 0) AS inserted
+                """,
+                (
+                    job.title,
+                    job.company,
+                    job.location,
+                    job.url,
+                    job.description,
+                    job.posted_date,
+                    job.closing_at,
+                    job.source,
+                    job.scraped_at,
+                ),
+            )
+            row = cur.fetchone()
+            return bool(row["inserted"]) if row else False
 
     def get_all_jobs(self) -> list[dict]:
         with self._cursor() as cur:
