@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 from bs4 import BeautifulSoup
+import json
 
 from .job import Job
 
@@ -28,6 +29,50 @@ _UNIT_DAYS = {
     "year": 365,
     "years": 365,
 }
+
+# Marker for the SPA's hydrated Redux state assignment in the page HTML.
+_STATE_MARKER = "window.__initialState__"
+
+
+def extract_precise_close_times(html: str) -> dict[str, datetime]:
+    """Pull precise ISO 8601 closing timestamps from GradConnection's
+    hydrated Redux state. Returns a dict keyed by campaign slug.
+
+    Returns an empty dict if the state blob isn't present or can't be
+    parsed (e.g., page format changes upstream) — callers should fall
+    back to text parsing.
+    """
+    start = html.find(_STATE_MARKER)
+    if start == -1:
+        return {}
+
+    brace_start = html.find("{", start)
+    if brace_start == -1:
+        return {}
+
+    # The state blob is JS object-literal syntax, not strict JSON — it
+    # uses JavaScript `undefined` for missing values, which json.loads
+    # rejects. Convert to `null` before parsing.
+    blob = re.sub(r"\bundefined\b", "null", html[brace_start:])
+
+    try:
+        state, _ = json.JSONDecoder().raw_decode(blob)
+    except json.JSONDecodeError:
+        return {}
+
+    result: dict[str, datetime] = {}
+    for group in state.get("campaigngroupstore", {}).get("campaignGroups", []):
+        for c in group.get("campaigns", []):
+            slug = c.get("slug")
+            end_raw = (c.get("interval") or {}).get("end")
+            if slug and end_raw:
+                try:
+                    result[slug] = datetime.fromisoformat(
+                        end_raw.replace("Z", "+00:00")
+                    )
+                except ValueError:
+                    continue
+    return result
 
 
 def parse_closing_in(text: str, scraped_at: datetime) -> datetime | None:
@@ -92,16 +137,17 @@ class Scraper:
         """Parse HTML and return a list of Job objects."""
         soup = BeautifulSoup(html, "lxml")
         cards = soup.select("div.campaign-listing-box")
+        precise_close_times = extract_precise_close_times(html)
         jobs = []
 
         for card in cards:
-            job = self._parse_card(card, category)
+            job = self._parse_card(card, category, precise_close_times)
             if job is not None:
                 jobs.append(job)
 
         return jobs
 
-    def _parse_card(self, card, category: str) -> Job | None:
+    def _parse_card(self, card, category: str, precise_close_times: dict[str, datetime]) -> Job | None:
         """Extract a single Job from one card's BeautifulSoup element."""
         title_link = card.select_one("a.box-header-title")
         if title_link is None:
@@ -128,9 +174,14 @@ class Scraper:
         desc_el = card.select_one(".box-description-para")
         description = desc_el.get_text(strip=True) if desc_el else ""
 
-        # Compute absolute closing timestamp from the relative text.
+        # Prefer the precise ISO 8601 timestamp from the SPA's hydrated state;
+        # fall back to parsing the rounded "Closing in N <unit>" text.
         scraped_at = datetime.now(timezone.utc)
-        closing_at = parse_closing_in(posted_date, scraped_at)
+        slug = url.rstrip("/").rsplit("/", 1)[-1] if "/" in url else None
+        if slug and slug in precise_close_times:
+            closing_at = precise_close_times[slug]
+        else:
+            closing_at = parse_closing_in(posted_date, scraped_at)
 
         return Job(
             title=title,
